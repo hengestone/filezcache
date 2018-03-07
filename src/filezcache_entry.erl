@@ -20,11 +20,12 @@
 
 -include_lib("kernel/include/file.hrl").
 
--behaviour(gen_fsm).
+-behaviour(gen_statem).
 
 % api
 -export([
         start_link/3,
+        callback_mode/0,
         fetch/2,
         fetch_file/2,
         store/2,
@@ -51,7 +52,7 @@
     ]).
 
 % For testing
--export([ 
+-export([
     filename/1
     ]).
 
@@ -80,11 +81,11 @@
 %% API
 
 start_link(Key, Writer, Opts) ->
-    gen_fsm:start_link(?MODULE, [Key, Writer, Opts], []).
+    gen_statem:start_link(?MODULE, [Key, Writer, Opts], []).
 
 fetch(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, {fetch, self(), Opts}, infinity)
+        gen_statem:call(Pid, {fetch, self(), Opts}, infinity)
     catch
         exit:{noproc, _} ->
             {error, enoent}
@@ -92,12 +93,14 @@ fetch(Pid, Opts) ->
 
 fetch_file(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, {fetch_file, self(), Opts}, infinity)
+        gen_statem:call(Pid, {fetch_file, self(), Opts}, infinity)
     catch
         exit:{noproc, _} ->
             {error, enoent}
     end.
 
+callback_mode() ->
+    state_functions.
 -spec store(pid(),
              {stream_start, pid(), integer()|undefined}
             |{stream_fun, pid(), function(), integer()|undefined}
@@ -105,20 +108,20 @@ fetch_file(Pid, Opts) ->
             |{file, file:filename()}
             |{tmpfile, file:filename()}) -> ok.
 store(Pid, Value) ->
-    gen_fsm:send_event(Pid, Value).
+    gen_statem:cast(Pid, Value).
 
 repop(Pid, Key, Filename, Size, Checksum) ->
-    gen_fsm:send_event(Pid, {repop, Key, Filename, Size, Checksum}).
+    gen_statem:cast(Pid, {repop, Key, Filename, Size, Checksum}).
 
 append_stream(Pid, Data) ->
-    gen_fsm:send_event(Pid, {stream_append, self(), Data}).
+    gen_statem:cast(Pid, {stream_append, self(), Data}).
 
 finish_stream(Pid) ->
-    gen_fsm:send_event(Pid, {stream_finish, self()}).
+    gen_statem:cast(Pid, {stream_finish, self()}).
 
 delete(Pid) ->
     try
-        case gen_fsm:sync_send_all_state_event(Pid, delete, infinity) of
+        case gen_statem:cast(Pid, delete, infinity) of
             ok ->
                 MRef = erlang:monitor(process, Pid),
                 receive
@@ -134,10 +137,10 @@ delete(Pid) ->
     end.
 
 logged(Pid) ->
-    gen_fsm:send_event(Pid, logged).
+    gen_statem:cast(Pid, logged).
 
 gc(Pid) ->
-    gen_fsm:send_all_state_event(Pid, gc).
+    gen_statem:cast(Pid, gc).
 
 %% gen_server callbacks
 
@@ -151,9 +154,9 @@ init([Key, WriterPid, Opts]) ->
                     size = 0,
                     final_size = undefined,
                     checksum = 0,
-                    checksum_context = undefined, 
+                    checksum_context = undefined,
                     writer_pid = WriterPid,
-                    writer_mon = erlang:monitor(process, WriterPid), 
+                    writer_mon = erlang:monitor(process, WriterPid),
                     devices = [],
                     waiters = [],
                     last_access = Now,
@@ -169,7 +172,7 @@ wait_for_data({data, Data}, #state{devices=Devices, waiters=Waiters, filename=Fi
     ok = file:write_file(Filename, Data),
     send_devices(Devices, {final, Size}),
     send_waiters(Waiters, Size, Filename),
-    State1 = State#state{checksum=crypto:hash(sha, Data), 
+    State1 = State#state{checksum=crypto:hash(sha, Data),
                          size=Size,
                          final_size=Size,
                          devices=[]},
@@ -310,7 +313,7 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason}, StateName, State) ->
     State1 = State#state{lockers=[ M || M <- State#state.lockers, M =/= MRef ]},
     {next_state, StateName, State1};
 handle_info(_Info, StateName, State) ->
-    erlang:put(state_name, StateName), 
+    erlang:put(state_name, StateName),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, #state{fd=undefined}) ->
@@ -318,9 +321,9 @@ terminate(_Reason, _StateName, #state{fd=undefined}) ->
     ok;
 terminate(_Reason, _StateName, #state{fd=FD, filename=Filename}) ->
     % Incomplete cache entry, cleanup
-    _ = file:close(FD), 
+    _ = file:close(FD),
     _ = file:delete(Filename),
-    ok. 
+    ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
@@ -332,7 +335,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 demonitor_writer(#state{writer_mon=undefined} = State) ->
     State;
 demonitor_writer(#state{writer_mon=MRef} = State) ->
-    erlang:demonitor(MRef), 
+    erlang:demonitor(MRef),
     State#state{
         writer_pid=undefined,
         writer_mon=undefined
@@ -354,7 +357,7 @@ maybe_check_filename1(true, Now, State) ->
 
 
 %% @doc We didn't receive all data yet, reply with a io-device which can be used to read the data.
-handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName, 
+handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName,
                           #state{key=Key, size=Size, final_size=FinalSize, filename=Filename, devices=Devices} = State) ->
     {ok, DevicePid} = filezcache_device_sup:start_child(self(), Filename, Size, FinalSize),
     filezcache_entry_manager:log_access(Key, DevicePid),
@@ -379,7 +382,7 @@ filename(Key) ->
     [ A1,A2,B1,B2 | HashS ] = encode(crypto:hash(sha256, term_to_binary(Key)), 36),
     Filename = filename:join([filezcache:data_dir(), [A1,A2], [B1,B2], HashS]),
     ok = filelib:ensure_dir(Filename),
-    Filename. 
+    Filename.
 
 encode(Data, Base) when is_binary(Data) ->
     encode(binary_to_list(Data), Base);
@@ -396,7 +399,7 @@ encode(Data, Base) when is_list(Data) ->
 send_devices([], _Msg) ->
     ok;
 send_devices(Pids, Msg) ->
-    lists:map(fun(Pid) -> 
+    lists:map(fun(Pid) ->
                   gen_server:cast(Pid, Msg)
               end,
               Pids).
@@ -405,7 +408,7 @@ send_waiters([], _Size, _Filename) ->
     ok;
 send_waiters(Pids, Size, Filename) ->
     lists:map(fun(From) ->
-                    gen_fsm:reply(From, {ok, {file, Size, Filename}})
+                    gen_statem:reply(From, {ok, {file, Size, Filename}})
               end,
               Pids).
 
@@ -428,6 +431,6 @@ rename(TmpFile, Filename) ->
         {error, exdev} ->
             {ok, _BytesCopied} = file:copy(TmpFile, Filename),
             ok = file:delete(TmpFile);
-        ok -> 
+        ok ->
             ok
     end.

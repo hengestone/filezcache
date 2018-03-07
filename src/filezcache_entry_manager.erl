@@ -70,14 +70,14 @@
     recent :: list(),
     gc_candidate_pool = [] :: list(),
     bytes = 0 :: integer(),
-    max_bytes :: integer() 
+    max_bytes :: integer()
     }).
 
 
 -define(TIMEOUT, infinity).
 
 % Garbage collection setings
--define(GC_INTERVAL, 1000). 
+-define(GC_INTERVAL, 1000).
 -define(GC_MAX_BYTES, 10737418240).
 -define(GC_POOL_SIZE, 100).
 -define(GC_CHANCE_1_IN_N, 20).
@@ -115,7 +115,7 @@ lookup(Key, MonitorPid) ->
                 false ->
                     delete(Key, Filename),
                     {error, enoent}
-            end 
+            end
     end.
 
 gc(Key) ->
@@ -135,7 +135,7 @@ log_ready(EntryPid, Key, Filename, Size, Checksum) ->
 
 init([]) ->
     {A1,A2,A3} = os:timestamp(),
-    random:seed(A1, A2, A3),
+    rand:seed(A3, A2, A1),
     filezcache_store:init(),
     gen_server:cast(self(), log_init),
     timer:send_after(?GC_INTERVAL, gc),
@@ -143,8 +143,8 @@ init([]) ->
     {ok, #state{
             sizes = ets:new(?MODULE, [set, private]),
             monitors = gb_trees:empty(),
-            recent = [ 
-                ets:new(filezcache_recent_1, [set]), 
+            recent = [
+                ets:new(filezcache_recent_1, [set]),
                 ets:new(filezcache_recent_2, [set]),
                 ets:new(filezcache_recent_3, [set])
             ],
@@ -163,7 +163,7 @@ handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
             Mon = erlang:monitor(process, Pid),
             State1 = State#state{monitors=gb_trees:enter(Mon, {Key, Pid}, State#state.monitors)},
             State2 = case proplists:get_value(monitor, Opts) of
-                true -> 
+                true ->
                     maybe_add_key_referrer(Key, WriterPid, State1);
                 _ ->
                     State1
@@ -272,10 +272,10 @@ handle_info({'DOWN', MRef, process, Pid, _Reason}, #state{monitors=Monitors, byt
     State2 = case dict:find(Pid, State1#state.referrer2keys) of
         {ok, RefKeys} ->
             State1#state{
-                referrer2keys = dict:erase(Pid, State#state.referrer2keys), 
+                referrer2keys = dict:erase(Pid, State#state.referrer2keys),
                 key2referrers = remove_referrer(Pid, RefKeys, State#state.key2referrers)
             };
-        error -> 
+        error ->
             State1
     end,
     {noreply, State2};
@@ -337,7 +337,7 @@ maybe_add_key_referrer(Key, Pid, State) ->
 do_add_key_referrer(Key, Pid, State) ->
     _ = erlang:monitor(process, Pid),
     State#state{
-        key2referrers = dict:append(Key, Pid, State#state.key2referrers), 
+        key2referrers = dict:append(Key, Pid, State#state.key2referrers),
         referrer2keys = dict:append(Pid, Key, State#state.referrer2keys)
     }.
 
@@ -357,7 +357,7 @@ remove_referrer(Pid, [Key|Keys], Key2Pids) ->
             end;
         error ->
             remove_referrer(Pid, Keys, Key2Pids)
-    end. 
+    end.
 
 %% @doc Ensure that the proper filezcache_log table has been created
 ensure_tables() ->
@@ -379,7 +379,7 @@ ensure_tables() ->
 
 %% @doc Repopulates the cache using the log
 repopulate() ->
-    Keys = mnesia:dirty_all_keys(filezcache_log_entry), 
+    Keys = mnesia:dirty_all_keys(filezcache_log_entry),
     error_logger:info_msg("filezcache: repopulating cache with ~p keys", [length(Keys)]),
     repopulate(Keys),
     error_logger:info_msg("filezcache: scanning cache directory for unknown files."),
@@ -422,7 +422,7 @@ scan_dir(Dir) ->
             scan_files(Dir, Files);
         {error, _} ->
             ok
-    end. 
+    end.
 
 scan_files(_Dir, []) ->
     ok;
@@ -448,7 +448,7 @@ delete(Key) ->
             mnesia:read(filezcache_log_entry, Key)
         end,
     case mnesia:activity(transaction, F) of
-        [] -> 
+        [] ->
             {ok, 0};
         [#filezcache_log_entry{key=Key,filename=Filename, size=Size}] ->
             ok = delete(Key,Filename),
@@ -501,7 +501,7 @@ fill_pool(State, eager, N) when N >= 100 ->
 fill_pool(#state{gc_candidate_pool=Pool, iterator=Iterator} = State, Method, N) ->
     case length(Pool) < ?GC_POOL_SIZE of
         true ->
-            {Candidates, Iterator1} = iterate(Iterator), 
+            {Candidates, Iterator1} = iterate(Iterator),
             Pool1 = fill_pool_1(Pool, Candidates, Method),
             fill_pool(State#state{gc_candidate_pool=Pool1, iterator=Iterator1}, Method, N+1);
         false ->
@@ -527,12 +527,12 @@ fill_pool_1(Pool, [#filezcache_log_entry{key=Key, filename=Filename}|Cs], Method
 do_select(eager) ->
     true;
 do_select(normal) ->
-    random:uniform(?GC_CHANCE_1_IN_N) =:= 1.
+    rand:uniform(?GC_CHANCE_1_IN_N) =:= 1.
 
-random_evict([]) -> 
+random_evict([]) ->
     [];
 random_evict(Pool) ->
-    Key = lists:nth(random:uniform(length(Pool)), Pool),
+    Key = lists:nth(rand:uniform(length(Pool)), Pool),
     gc(Key),
     lists:delete(Key, Pool).
 
@@ -548,14 +548,14 @@ iterate(start) ->
     iterate(0);
 iterate(SlotNr) ->
     case get_slot(SlotNr) of
-        '$end_of_table' -> 
+        '$end_of_table' ->
             {[], start};
-        Entries -> 
+        Entries ->
             {Entries, SlotNr+1}
     end.
 
 get_slot(SlotNr) ->
-    try 
+    try
         mnesia:dirty_slot(filezcache_log_entry, SlotNr)
     catch
         error:badarg -> '$end_of_table'
