@@ -18,8 +18,8 @@
 -module(filezcache).
 
 -export([
-    insert/2, 
-    insert/3, 
+    insert/2,
+    insert/3,
     insert_file/2,
     insert_file/3,
     insert_tmpfile/2,
@@ -32,10 +32,10 @@
     finish_stream/1,
     locate_monitor/1,
     access/1,
-    lookup/1, 
-    lookup_file/1, 
-    lookup/2, 
-    lookup_file/2, 
+    lookup/1,
+    lookup_file/1,
+    lookup/2,
+    lookup_file/2,
     delete/1,
     where/1,
 
@@ -43,7 +43,8 @@
 
     data_dir/0,
     journal_dir/0,
-    checksum/1
+    checksum/1,
+    checksum/3
     ]).
 
 -define(BLOCK_SIZE, 65536).
@@ -104,7 +105,7 @@ locate_monitor(Key) ->
 
 -spec access(term()) -> ok.
 access(Key) ->
-    filezcache_entry_manager:log_access(Key). 
+    filezcache_entry_manager:log_access(Key).
 
 -spec lookup(term()) -> {ok, {file, integer(), string()}} | {ok, {device, pid()}} | {error, term()}.
 lookup(Key) ->
@@ -228,10 +229,14 @@ priv_dir() ->
 -spec checksum(file:filename()) -> binary().
 checksum(Filename) ->
     Ctx = crypto:hash_init(sha),
-    {ok, FD} = file:open(Filename, [read,binary]),
-    Ctx1 = checksum1(Ctx, FD),
-    file:close(FD),
+    Ctx1 = checksum(Filename, Ctx, fun crypto:hash_update/2),
     crypto:hash_final(Ctx1).
+
+checksum(Filename, Ctx, UpdateFun) ->
+    {ok, FD} = file:open(Filename, [read,binary]),
+    Ctx1 = checksum1(Ctx, FD, Ctx, UpdateFun),
+    file:close(FD),
+    Ctx1.
 
 checksum1(Ctx, FD) ->
     case file:read(FD, ?BLOCK_SIZE) of
@@ -239,4 +244,12 @@ checksum1(Ctx, FD) ->
             Ctx;
         {ok, Data} ->
             checksum1(crypto:hash_update(Ctx, Data), FD)
+    end.
+
+checksum1(Ctx, FD, Ctx, UpdateFun) ->
+    case file:read(FD, ?BLOCK_SIZE) of
+        eof ->
+            Ctx;
+        {ok, Data} ->
+            checksum1(UpdateFun(Ctx, Data), FD)
     end.
