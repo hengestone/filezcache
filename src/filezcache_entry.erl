@@ -37,7 +37,7 @@
         gc/1
         ]).
 
-% gen_fsm
+% gen_statem
 -export([init/1, handle_sync_event/4, handle_event/3, handle_info/3, terminate/3, code_change/4]).
 
 % states

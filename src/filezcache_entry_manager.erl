@@ -135,7 +135,7 @@ log_ready(EntryPid, Key, Filename, Size, Checksum) ->
 
 init([]) ->
     {A1,A2,A3} = os:timestamp(),
-    rand:seed(A3, A2, A1),
+    random:seed(A3, A2, A1),
     filezcache_store:init(),
     gen_server:cast(self(), log_init),
     timer:send_after(?GC_INTERVAL, gc),
@@ -527,12 +527,12 @@ fill_pool_1(Pool, [#filezcache_log_entry{key=Key, filename=Filename}|Cs], Method
 do_select(eager) ->
     true;
 do_select(normal) ->
-    rand:uniform(?GC_CHANCE_1_IN_N) =:= 1.
+    random:uniform(?GC_CHANCE_1_IN_N) =:= 1.
 
 random_evict([]) ->
     [];
 random_evict(Pool) ->
-    Key = lists:nth(rand:uniform(length(Pool)), Pool),
+    Key = lists:nth(random:uniform(length(Pool)), Pool),
     gc(Key),
     lists:delete(Key, Pool).
 
