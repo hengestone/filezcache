@@ -38,7 +38,7 @@
         ]).
 
 % gen_statem
--export([init/1, handle_sync_event/4, handle_event/3, handle_info/3, terminate/3, code_change/4]).
+-export([init/1, handle_event/4, handle_info/3, terminate/3, code_change/4]).
 
 % states
 -export([
@@ -100,7 +100,7 @@ fetch_file(Pid, Opts) ->
     end.
 
 callback_mode() ->
-    state_functions.
+    handle_event_function.
 -spec store(pid(),
              {stream_start, pid(), integer()|undefined}
             |{stream_fun, pid(), function(), integer()|undefined}
@@ -283,26 +283,25 @@ closing(timeout, #state{filename=Filename} = State) ->
     {stop, normal, State#state{filename=undefined}}.
 
 %% All state events: 'gc'
-handle_event(gc, wait_for_data, State) ->
-    {next_state, wait_for_data, State};
-handle_event(gc, streaming, State) ->
-    {next_state, streaming, State};
-handle_event(gc, StateName, #state{lockers=Lockers} = State) when Lockers =/= [] ->
-    {next_state, StateName, State};
-handle_event(gc, _StateName, State) ->
-    {next_state, closing, State, 0};
-
-handle_event(_Event, StateName, State) ->
-    {next_state, StateName, State}.
+handle_event(gc, wait_for_data, _State, Data) ->
+    {next_state, wait_for_data, Data};
+handle_event(gc, streaming, _State, Data) ->
+    {next_state, streaming, Data};
+handle_event(gc, StateName, #state{lockers=Lockers}, Data) when Lockers =/= [] ->
+    {next_state, StateName, Data};
+handle_event(gc, _StateName, _State, _Data) ->
+    {next_state, closing, 0};
 
 %% All sync state events: 'delete'
-handle_sync_event(delete, _From, StateName, #state{lockers=Lockers} = State) when Lockers =/= [] ->
-    {reply, {error, locked}, StateName, State};
-handle_sync_event(delete, _From, _StateName, State) ->
-    {reply, ok, closing, State, 0};
+handle_event({call, From}, delete, #state{lockers=Lockers}, _Data) when Lockers =/= [] ->
+    gen_statem:reply(From, {error, locked});
+handle_event({call, From}, delete, _State, _Data) ->
+    gen_statem:reply(From, {ok, closing, 0});
 
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
-handle_sync_event(_Event, _From, StateName, State) ->
+handle_event({call, _From}, StateName, _State, Data) ->
+    {next_state, StateName, Data};
+handle_event(_Event, StateName, State, _) ->
     {next_state, StateName, State}.
 
 %% Remove stopped processes that were locking this entry
