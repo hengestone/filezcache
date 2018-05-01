@@ -44,7 +44,9 @@
     data_dir/0,
     journal_dir/0,
     checksum/1,
-    checksum/3
+    checksum/3,
+    checksum1/3,
+    checksum_iter1/3
     ]).
 
 -define(BLOCK_SIZE, 65536).
@@ -227,29 +229,55 @@ priv_dir() ->
     end.
 
 -spec checksum(file:filename()) -> binary().
+checksum(Filename) when is_list(Filename) ->
+  checksum(binary:list_to_bin(Filename));
 checksum(Filename) ->
     Ctx = crypto:hash_init(sha),
-    Ctx1 = checksum(Filename, Ctx, fun crypto:hash_update/2),
-    crypto:hash_final(Ctx1).
-
-checksum(Filename, Ctx, UpdateFun) ->
-    {ok, FD} = file:open(Filename, [read,binary]),
-    Ctx1 = checksum1(Ctx, FD, Ctx, UpdateFun),
-    file:close(FD),
-    Ctx1.
-
-checksum1(Ctx, FD) ->
-    case file:read(FD, ?BLOCK_SIZE) of
-        eof ->
-            Ctx;
-        {ok, Data} ->
-            checksum1(crypto:hash_update(Ctx, Data), FD)
+    case checksum(Filename, Ctx, fun crypto:hash_update/2) of
+      {ok, Ctx1} ->
+          crypto:hash_final(Ctx1);
+      Err        ->
+          Err
     end.
 
-checksum1(Ctx, FD, Ctx, UpdateFun) ->
+checksum(Filename, Ctx, UpdateFun)
+    when is_binary(Filename),
+         is_function(UpdateFun)
+    ->
+    case file:open(Filename, [read, binary]) of
+      {ok, FD} ->
+        Ctx1 = checksum_iter(Ctx, FD, UpdateFun),
+        file:close(FD),
+        {ok, Ctx1};
+      Err -> Err
+    end.
+
+checksum1(Filename, Ctx, UpdateFun)
+    when is_binary(Filename),
+         is_function(UpdateFun)
+    ->
+    case file:open(Filename, [read, binary]) of
+      {ok, FD} ->
+        checksum_iter1(Ctx, FD, UpdateFun);
+      Err -> Err
+    end.
+
+checksum_iter(Ctx, FD, UpdateFun)
+    when is_function(UpdateFun)
+    ->
     case file:read(FD, ?BLOCK_SIZE) of
         eof ->
             Ctx;
         {ok, Data} ->
-            checksum1(UpdateFun(Ctx, Data), FD)
+            checksum_iter(UpdateFun(Ctx, Data), FD, UpdateFun)
+    end.
+
+checksum_iter1(Ctx, FD, UpdateFun)
+    when is_function(UpdateFun)
+    ->
+    case file:read(FD, ?BLOCK_SIZE) of
+        eof ->
+            {eof, Ctx};
+        {ok, Data} ->
+            {ok, UpdateFun(Ctx, Data)}
     end.

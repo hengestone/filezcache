@@ -89,6 +89,7 @@
 %% API
 
 start_link() ->
+    ok = application:ensure_started(mnesia),
     ok = ensure_tables(),
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -373,7 +374,8 @@ ensure_tables() ->
     ],
     case mnesia:create_table(filezcache_log_entry, TabDef) of
         {atomic, ok} -> ok;
-        {aborted, {already_exists, filezcache_log_entry}} -> ok
+        {aborted, {already_exists, filezcache_log_entry}} -> ok;
+        Error -> Error
     end.
 
 
